@@ -1,0 +1,13 @@
+description: test
+up:
+  - |
+    CREATE TABLE table (
+        id int,
+        aa float
+        )
+
+  - CREATE INDEX table_id_index ON table ( id )
+
+down:
+  - DROP TABLE table
+  - DROP INDEX table_id_index
