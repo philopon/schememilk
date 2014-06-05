@@ -7,7 +7,6 @@
 import Control.Monad
 import Prelude hiding (writeFile)
 import System.IO hiding (writeFile)
-import Filesystem
 import Filesystem.Path.CurrentOS
 import Database.SchemeMilk.Internal
 import Database.SchemeMilk.Types
@@ -30,11 +29,27 @@ data Config
     = SQLite { sqliteConnInfo :: ConnectInfo SQLite.Connection }
     deriving (Show, Read)
 
+instance Yaml.FromJSON Config where
+    parseJSON (Yaml.Object o) = do 
+        backend <- o Yaml..: "backend"
+        ci <- case backend :: String of
+            "sqlite" -> SQLiteConnInfo <$> o Yaml..: "connect_info"
+            _        -> fail "unknown backend."
+        return $ SQLite ci
+    parseJSON _ = fail "not object"
+
+instance Yaml.ToJSON Config where
+    toJSON (SQLite (SQLiteConnInfo ci)) = Yaml.object [ "backend"      Yaml..= ("sqlite" :: T.Text)
+                                                      , "connect_info" Yaml..= ci
+                                                      ]
+
 writeConfig :: Repo -> Config -> IO ()
-writeConfig repo be = writeTextFile (repoDirectory repo </> "config") (T.pack $ show be)
+writeConfig repo be = Yaml.encodeFile (encodeString $ repoDirectory repo </> "config") be
 
 readConfig :: Repo -> IO Config
-readConfig repo = read . T.unpack <$> readTextFile (repoDirectory repo </> "config")
+readConfig repo =
+    Yaml.decodeFile (encodeString $ repoDirectory repo </> "config") >>=
+    maybe (fail "cannot read config file.") return 
 
 config :: Parser Config
 config = (nullOption (short 'b' <> reader (\s -> if s == "sqlite" then return SQLite else fail ""))) <*> (SQLiteConnInfo <$> strOption (short 's'))
@@ -101,4 +116,3 @@ main = execParser (info (helper <*> options) fullDesc) >>= \case
                 mapM_ (execute_ conn) (upSql s) >> setVersion conn (Just i)
  where 
     repo = Repo ".schememilk"
-
