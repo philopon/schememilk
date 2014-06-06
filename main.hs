@@ -54,7 +54,7 @@ readConfig repo =
 config :: Parser Config
 config = (nullOption (short 'b' <> reader (\s -> if s == "sqlite" then return SQLite else fail ""))) <*> (SQLiteConnInfo <$> strOption (short 's'))
 
-data Options 
+data Action
     = InitRepo { optConfig :: Config }
     | ShowStatus
     | ShowLog
@@ -63,7 +63,7 @@ data Options
     | DownScheme
     | CurrentScheme
 
-options :: Parser Options
+options :: Parser Action
 options = subparser $ mconcat
     [ (command "status"  $ info (helper <*> pure ShowStatus) $ progDesc "show status")
     , (command "init"    $ info (helper <*> (InitRepo <$> config)) $ progDesc "init repo")
@@ -75,44 +75,47 @@ options = subparser $ mconcat
     ]
 
 main :: IO ()
-main = execParser (info (helper <*> options) fullDesc) >>= \case
-    InitRepo{..} -> withConfig optConfig $ \conn -> do
-        initRepo conn repo
-        writeConfig repo optConfig
-
-    ShowStatus   -> withSavedConfig repo $ \conn -> do
-        print =<< currentVersion conn
-        print =<< upper conn repo
-        print =<< lower conn repo
-
-    ShowLog      ->
-        let showLog (i,  Left e) = hPutStrLn stderr . unwords $
-                ["Warning: error occored on", SC.unpack $ unIdent i, "(", show e, ")"]
-            showLog (i, Right s) = SC.putStr (unIdent i `SC.snoc` '\t') >> maybe (putChar '\n') T.putStrLn (description s)
-        in listLog repo >>= mapM_ showLog . reverse
-
-    NewScheme    -> newScheme repo "template.yml" >>= print
-
-    UpScheme     -> withSavedConfig repo $ \conn -> upper conn repo >>= \case
-        []  -> putStrLn "newest."
-        i:_ -> Yaml.decodeFileEither (encodeString $ schemeFile repo i) >>= \case
-            Left  e -> print e
-            Right s -> do 
-                SC.putStrLn (SC.unwords ["up to", unIdent i]) 
-                withTransaction conn $ mapM_ (execute_ conn) (upSql s) >> setVersion conn (Just i)
-
-    DownScheme   -> withSavedConfig repo $ \conn -> lower conn repo >>= \case
-        []  -> putStrLn "oldest."
-        i:o -> SC.putStrLn (SC.unwords ["down from", unIdent i]) >> Yaml.decodeFileEither (encodeString $ schemeFile repo i) >>= \case
-            Left  e -> print e
-            Right s -> withTransaction conn $ mapM_ (execute_ conn) (dnSql s) >> setVersion conn (listToMaybe o)
-
-    CurrentScheme -> withSavedConfig repo $ \conn -> upper conn repo >>= \case
-        []  -> putStrLn "newest."
-        ss  -> withTransaction conn $ forM_ ss $ \i -> Yaml.decodeFileEither (encodeString $ schemeFile repo i) >>= \case
-            Left  e -> print e
-            Right s -> do
-                SC.putStrLn (SC.unwords ["up to", unIdent i]) 
-                mapM_ (execute_ conn) (upSql s) >> setVersion conn (Just i)
- where 
+main = execParser (info (helper <*> options) fullDesc) >>= doAction repo
+  where
     repo = Repo ".schememilk"
+
+doAction :: Repo -> Action -> IO ()
+doAction repo InitRepo{..} = withConfig optConfig $ \conn -> do
+    initRepo conn repo
+    writeConfig repo optConfig
+
+doAction repo ShowStatus = withSavedConfig repo $ \conn -> do
+    print =<< currentVersion conn
+    print =<< upper conn repo
+    print =<< lower conn repo
+
+doAction repo ShowLog =
+    let showLog (i,  Left e) = hPutStrLn stderr . unwords $
+            ["Warning: error occored on", SC.unpack $ unIdent i, "(", show e, ")"]
+        showLog (i, Right s) = SC.putStr (unIdent i `SC.snoc` '\t') >> maybe (putChar '\n') T.putStrLn (description s)
+    in listLog repo >>= mapM_ showLog . reverse
+
+doAction repo NewScheme = newScheme repo "template.yml" >>= print
+
+doAction repo UpScheme  = withSavedConfig repo $ \conn -> upper conn repo >>= \case
+    []  -> putStrLn "newest."
+    i:_ -> Yaml.decodeFileEither (encodeString $ schemeFile repo i) >>= \case
+        Left  e -> print e
+        Right s -> do 
+            SC.putStrLn (SC.unwords ["up to", unIdent i]) 
+            withTransaction conn $ mapM_ (execute_ conn) (upSql s) >> setVersion conn (Just i)
+
+doAction repo DownScheme = withSavedConfig repo $ \conn -> lower conn repo >>= \case
+    []  -> putStrLn "oldest."
+    i:o -> SC.putStrLn (SC.unwords ["down from", unIdent i]) >> Yaml.decodeFileEither (encodeString $ schemeFile repo i) >>= \case
+        Left  e -> print e
+        Right s -> withTransaction conn $ mapM_ (execute_ conn) (dnSql s) >> setVersion conn (listToMaybe o)
+
+doAction repo CurrentScheme = withSavedConfig repo $ \conn -> upper conn repo >>= \case
+    []  -> putStrLn "newest."
+    ss  -> withTransaction conn $ forM_ ss $ \i -> Yaml.decodeFileEither (encodeString $ schemeFile repo i) >>= \case
+        Left  e -> print e
+        Right s -> do
+            SC.putStrLn (SC.unwords ["up to", unIdent i]) 
+            mapM_ (execute_ conn) (upSql s) >> setVersion conn (Just i)
+
