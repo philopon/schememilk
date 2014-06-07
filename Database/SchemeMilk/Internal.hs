@@ -22,12 +22,12 @@ import Control.Monad
 import Control.Monad.Primitive
 
 import Data.Word
-import Data.Time.LocalTime
 import qualified Data.Set as Set
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Char8 as SC
 import qualified Data.Text as T
 import Data.String(IsString)
+import Data.Time
 
 withConnection :: Backend d => ConnectInfo d -> (d -> IO b) -> IO b
 withConnection ci = bracket (connect ci) close
@@ -56,8 +56,12 @@ initRepo conn d = do
     touchFile $ historyFile d
     createAdminTable conn
 
-readHistoryFile :: Repo -> IO [Ident]
-readHistoryFile f = map (Ident . SC.takeWhile (/= ' ')) . SC.lines <$> readFile (historyFile f)
+readHistoryFile :: Repo -> IO [(Ident, UTCTime)]
+readHistoryFile f = map readf . SC.lines <$> readFile (historyFile f)
+  where
+    readf s = let (i,o) = SC.break (== ' ') s
+                  d     = read . tail $ SC.unpack o
+              in (Ident i, d)
 
 idChar :: S.ByteString
 idChar = "23456789ABCDEFGHJKLMNOPRSTUVWXYZabcdefghijkmnapqrstuvwxyz"
@@ -72,27 +76,32 @@ newIdent l g = do
 
 newScheme :: Repo
           -> FilePath -- ^ template
-          -> IO Ident
+          -> IO (Ident
+                , UTCTime -> IO () -- ^ commit
+                , IO () -- ^ rollback
+                )
 newScheme repo temp = do
     hist  <- readHistoryFile repo
-    newId <- withSystemRandom . asGenIO $ newIdent (Set.fromList hist)
-    time  <- getZonedTime
+    newId <- withSystemRandom . asGenIO $ newIdent (Set.fromList $ map fst hist)
     copyFile temp $ schemeFile repo newId
-    appendFile (historyFile repo) $ unIdent newId `SC.append` SC.pack (' ' : show time ++ "\n")
-    return newId
+    let commitf time = do
+            appendFile (historyFile repo) $ unIdent newId `SC.append` SC.pack (' ' : show time ++ "\n")
+        rollbackf = removeFile $ schemeFile repo newId
+    return (newId, commitf, rollbackf)
 
-upper :: Backend a => a -> Repo -> IO [Ident]
+
+upper :: Backend a => a -> Repo -> IO [(Ident, UTCTime)]
 upper conn repo = (,) <$> currentVersion conn <*> readHistoryFile repo >>= \case
     (Nothing, h) -> return h
-    (Just s,  h) -> case dropWhile (s /=) h of
+    (Just s,  h) -> case dropWhile ((s /=) . fst) h of
         []  -> return h
         [_] -> return []
         a   -> return $ tail a
 
-lower :: Backend a => a -> Repo -> IO [Ident]
+lower :: Backend a => a -> Repo -> IO [(Ident, UTCTime)]
 lower conn repo = (,) <$> currentVersion conn <*> readHistoryFile repo >>= \case
     (Nothing, _) -> return []
-    (Just s,  h) -> case dropWhile (s /=) $ reverse h of
+    (Just s,  h) -> case dropWhile ((s /=) . fst) $ reverse h of
         [] -> return h
         a  -> return a
 
@@ -109,9 +118,9 @@ instance FromJSON Scheme where
               fmap ((:[]) . Query) (parseJSON a)
     parseJSON _ = mzero
 
-listLog :: Repo -> IO [(Ident, Either ParseException Scheme)]
+listLog :: Repo -> IO [(Ident, UTCTime, Either ParseException Scheme)]
 listLog repo = readHistoryFile repo >>=
-    mapM (\i -> (i,) <$> (decodeFileEither . encodeString $ schemeFile repo i))
+    mapM (\(i,t) -> (i,t,) <$> (decodeFileEither . encodeString $ schemeFile repo i))
 
 left :: (l -> l') -> Either l r -> Either l' r
 left f (Left a)  = Left $ f a
