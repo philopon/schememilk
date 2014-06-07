@@ -9,7 +9,10 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.ByteString as S
 import Data.Maybe
+import Data.String
 import qualified Database.SQLite.Simple as SQLite
+import qualified Database.PostgreSQL.Simple as PSql
+import qualified Database.PostgreSQL.Simple.Types as PSql
 
 newtype Query = Query { unQuery :: T.Text }
     deriving (Show, Read, Eq)
@@ -59,10 +62,35 @@ instance Backend SQLite.Connection where
         ,   "version    VARCHAR(40),"
         ,   "applied_at TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP )"
         ]
-    currentVersion c = (join . listToMaybe . map (fmap (Ident . T.encodeUtf8) . SQLite.fromOnly)) `fmap`
-        SQLite.query_ c "SELECT version from _scheme_milk ORDER BY id DESC LIMIT 1"
-    setVersion c i = SQLite.execute c "INSERT INTO _scheme_milk (version) VALUES (?)"
-        (SQLite.Only $ fmap (T.decodeUtf8 . unIdent) i)
+    currentVersion = defaultCurrentVersion SQLite.fromOnly SQLite.query_
+    setVersion = defaultSetVersion SQLite.execute SQLite.Only
+
+instance Backend PSql.Connection where
+    newtype ConnectInfo PSql.Connection = PSqlConnInfo { unPSqlConnInfo :: PSql.ConnectInfo }
+
+    connect i = PSql.connect (unPSqlConnInfo i)
+    close     = PSql.close
+
+    execute_ c t = void $ PSql.execute_ c (PSql.Query . T.encodeUtf8 $ unQuery t)
+    begin    = PSql.begin
+    commit   = PSql.commit
+    rollback = PSql.rollback
+    withTransaction = PSql.withTransaction
+
+    currentVersion = defaultCurrentVersion PSql.fromOnly PSql.query_
+    setVersion = defaultSetVersion PSql.execute PSql.Only
+
+defaultCurrentVersion :: IsString q
+                      => (v -> Maybe T.Text) -> (c -> q -> IO [v]) -> c -> IO (Maybe Ident)
+defaultCurrentVersion fromOnly query_ c = 
+    (join . listToMaybe . map (fmap (Ident . T.encodeUtf8) . fromOnly)) `fmap`
+    query_ c "SELECT version FROM _scheme_milk ORDER BY id DESC LIMIT 1"
+
+defaultSetVersion :: IsString q
+                  => (c -> q -> v -> IO a) -> (Maybe T.Text -> v) -> c -> Maybe Ident -> IO ()
+defaultSetVersion execute only c i = void $
+    execute c "INSERT INTO _scheme_milk (version) VALUES (?)"
+    (only $ fmap (T.decodeUtf8 . unIdent) i)
 
 canonicalizeSql :: T.Text -> T.Text
 canonicalizeSql = T.concat . map (reduce . T.unpack) . T.groupBy gf 

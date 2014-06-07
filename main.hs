@@ -13,6 +13,7 @@ import Database.SchemeMilk.Internal
 import Database.SchemeMilk.Types
 import Options.Applicative
 import qualified Database.SQLite.Simple as SQLite
+import qualified Database.PostgreSQL.Simple as PSql
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.ByteString.Char8 as SC
@@ -24,27 +25,42 @@ import System.Process
 
 withConfig :: Config -> (forall b. Backend b => b -> IO a) -> IO a
 withConfig (SQLite a) f = withConnection a f
+withConfig (PSql   a) f = withConnection a f
 
 withSavedConfig :: Repo -> (forall b. Backend b => b -> IO a) -> IO a
 withSavedConfig repo m = readConfig repo >>= \b -> withConfig b m
 
 data Config
     = SQLite { sqliteConnInfo :: ConnectInfo SQLite.Connection }
-    deriving (Show, Read)
+    | PSql   { psqlConnInfo   :: ConnectInfo PSql.Connection   }
 
 instance Yaml.FromJSON Config where
     parseJSON (Yaml.Object o) = do 
         backend <- o Yaml..: "backend"
-        ci <- case backend :: String of
-            "sqlite" -> SQLiteConnInfo <$> o Yaml..: "connect_info"
-            _        -> fail "unknown backend."
-        return $ SQLite ci
+        case backend :: String of
+            "sqlite"     -> SQLite . SQLiteConnInfo <$> o Yaml..: "connect_info"
+            "postgresql" -> PSql   . PSqlConnInfo   <$> pci
+            _            -> fail "unknown backend."
+      where
+        pci = PSql.ConnectInfo
+            <$> o Yaml..: "host"
+            <*> o Yaml..: "port"
+            <*> o Yaml..: "user"
+            <*> o Yaml..: "password"
+            <*> o Yaml..: "database"
     parseJSON _ = fail "not object"
 
 instance Yaml.ToJSON Config where
     toJSON (SQLite (SQLiteConnInfo ci)) = Yaml.object [ "backend"      Yaml..= ("sqlite" :: T.Text)
                                                       , "connect_info" Yaml..= ci
                                                       ]
+    toJSON (PSql (PSqlConnInfo ci)) = Yaml.object [ "backend"  Yaml..= ("postgresql" :: T.Text)
+                                                  , "host"     Yaml..= PSql.connectHost ci
+                                                  , "port"     Yaml..= PSql.connectPort ci
+                                                  , "user"     Yaml..= PSql.connectUser ci
+                                                  , "password" Yaml..= PSql.connectPassword ci
+                                                  , "database" Yaml..= PSql.connectDatabase ci
+                                                  ]
 
 writeConfig :: Repo -> Config -> IO ()
 writeConfig repo be = Yaml.encodeFile (encodeString $ repoDirectory repo </> "config") be
@@ -55,7 +71,17 @@ readConfig repo =
     maybe (fail "cannot read config file.") return 
 
 config :: Parser Config
-config = (nullOption (short 'b' <> reader (\s -> if s == "sqlite" then return SQLite else fail ""))) <*> (SQLiteConnInfo <$> strOption (short 's'))
+config = subparser $
+    command "sqlite" (info sqlite $ progDesc "sqlite backend") <>
+    command "psql"   (info psql   $ progDesc "postgresql backend")
+  where
+    sqlite = SQLite . SQLiteConnInfo <$> argument str (metavar "SQLITE")
+    psql   = fmap (PSql . PSqlConnInfo) $ PSql.ConnectInfo 
+        <$> strOption (short 'h' <> long "host" <> value "localhost")
+        <*> option    (short 'p' <> long "port" <> value 5432)
+        <*> strOption (short 'u' <> long "user") 
+        <*> strOption (short 'w' <> long "password")
+        <*> strOption (short 'd' <> long "database")
 
 data Action
     = InitRepo { optConfig :: Config }
