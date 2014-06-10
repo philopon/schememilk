@@ -153,7 +153,8 @@ doAction repo InitRepo{..} = setPasswordIO optConfig >>= \c -> withConfig c $ \c
     writeConfig repo optConfig
     writeFile (repoDirectory repo </> "template.yml") "description: \nup: \ndown: \n"
 
-doAction repo ShowStatus{..} = withSavedConfig askPassword repo $ \conn ->
+doAction repo ShowStatus{..} = withSavedConfig askPassword repo $ \conn -> withTransaction conn $ do
+    createAdminTable conn
     (showf <$> currentVersion conn <*> upper conn repo) >>= SC.putStrLn
   where
     showf v       [] = maybe "no schema" (\v' -> SC.concat ["db version: ", unIdent v', "(latest)"]) v
@@ -180,13 +181,14 @@ doAction repo NewScheme{} = do
         then rbk      >> putStrLn "not modified."
         else cmt modt >> putStrLn "new schema created."
 
-doAction repo UpScheme{..}  = withSavedConfig askPassword repo $ \conn -> upper conn repo >>= \case
-    []      -> putStrLn "newest."
-    (i,_):_ -> Yaml.decodeFileEither (encodeString $ schemeFile repo i) >>= \case
-        Left  e -> print e
-        Right s -> do 
-            SC.putStrLn (SC.unwords ["up to", unIdent i]) 
-            withTransaction conn $ mapM_ (execute_ conn) (upSql s) >> setVersion conn (Just i)
+doAction repo UpScheme{..}  = withSavedConfig askPassword repo $ \conn -> 
+    withTransaction conn (createAdminTable conn >> upper conn repo) >>= \case
+        []      -> putStrLn "newest."
+        (i,_):_ -> Yaml.decodeFileEither (encodeString $ schemeFile repo i) >>= \case
+            Left  e -> print e
+            Right s -> do 
+                SC.putStrLn (SC.unwords ["up to", unIdent i]) 
+                withTransaction conn $ mapM_ (execute_ conn) (upSql s) >> setVersion conn (Just i)
 
 doAction repo DownScheme{..} = withSavedConfig askPassword repo $ \conn -> lower conn repo >>= \case
     []      -> putStrLn "oldest."
@@ -197,11 +199,12 @@ doAction repo DownScheme{..} = withSavedConfig askPassword repo $ \conn -> lower
                 withTransaction conn $ mapM_ (execute_ conn) (dnSql s) 
                 setVersion conn (fst <$> listToMaybe o)
 
-doAction repo CurrentScheme{..} = withSavedConfig askPassword repo $ \conn -> upper conn repo >>= \case
-    []  -> putStrLn "newest."
-    ss  -> withTransaction conn $ forM_ ss $ \(i,_) ->
-        Yaml.decodeFileEither (encodeString $ schemeFile repo i) >>= \case
-            Left  e -> print e
-            Right s -> do
-                SC.putStrLn (SC.unwords ["up to", unIdent i]) 
-                mapM_ (execute_ conn) (upSql s) >> setVersion conn (Just i)
+doAction repo CurrentScheme{..} = withSavedConfig askPassword repo $ \conn -> 
+    withTransaction conn (createAdminTable conn >> upper conn repo) >>= \case
+        []  -> putStrLn "newest."
+        ss  -> withTransaction conn $ forM_ ss $ \(i,_) ->
+            Yaml.decodeFileEither (encodeString $ schemeFile repo i) >>= \case
+                Left  e -> print e
+                Right s -> do
+                    SC.putStrLn (SC.unwords ["up to", unIdent i]) 
+                    mapM_ (execute_ conn) (upSql s) >> setVersion conn (Just i)

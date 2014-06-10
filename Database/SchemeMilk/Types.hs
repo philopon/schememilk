@@ -38,7 +38,7 @@ class Backend a where
 
     createAdminTable :: a -> IO ()
     createAdminTable c = execute_ c . Query $ T.unlines
-        [ "CREATE TABLE _scheme_milk ("
+        [ "CREATE TABLE IF NOT EXISTS _scheme_milk ("
         ,   "id         SERIAL      PRIMARY KEY,"
         ,   "version    VARCHAR(40),"
         ,   "applied_at TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP )"
@@ -57,7 +57,7 @@ instance Backend SQLite.Connection where
     rollback c     = SQLite.execute_ c "ROLLBACK TRANSACTION"
     withTransaction = SQLite.withTransaction
     createAdminTable c = execute_ c $ Query $ T.unlines
-        [ "CREATE TABLE _scheme_milk ("
+        [ "CREATE TABLE IF NOT  EXISTS _scheme_milk ("
         ,   "id         INTEGER     PRIMARY KEY AUTOINCREMENT,"
         ,   "version    VARCHAR(40),"
         ,   "applied_at TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP )"
