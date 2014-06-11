@@ -29,7 +29,7 @@ import qualified Data.Text as T
 import Data.String(IsString)
 import Data.Time
 
-withConnection :: Backend d => ConnectInfo d -> (d -> IO b) -> IO b
+withConnection :: Backend c ci => ci -> (c -> IO b) -> IO b
 withConnection ci = bracket (connect ci) close
 
 touchFile :: FilePath -> IO ()
@@ -49,7 +49,7 @@ schemeDirectory (Repo p) = p </> "scheme"
 schemeFile :: Repo -> Ident -> FilePath
 schemeFile repo (Ident idnt) = schemeDirectory repo </> decodeString (SC.unpack idnt)
 
-initRepo :: forall d. Backend d => d -> Repo -> IO ()
+initRepo :: Backend c ci => c -> Repo -> IO ()
 initRepo conn d = do
     createDirectory False $ repoDirectory d
     createDirectory False $ schemeDirectory d
@@ -90,7 +90,7 @@ newScheme repo temp = do
     return (newId, commitf, rollbackf)
 
 
-upper :: Backend a => a -> Repo -> IO [(Ident, UTCTime)]
+upper :: Backend c ci => c -> Repo -> IO [(Ident, UTCTime)]
 upper conn repo = (,) <$> currentVersion conn <*> readHistoryFile repo >>= \case
     (Nothing, h) -> return h
     (Just s,  h) -> case dropWhile ((s /=) . fst) h of
@@ -98,7 +98,7 @@ upper conn repo = (,) <$> currentVersion conn <*> readHistoryFile repo >>= \case
         [_] -> return []
         a   -> return $ tail a
 
-lower :: Backend a => a -> Repo -> IO [(Ident, UTCTime)]
+lower :: Backend c ci => c -> Repo -> IO [(Ident, UTCTime)]
 lower conn repo = (,) <$> currentVersion conn <*> readHistoryFile repo >>= \case
     (Nothing, _) -> return []
     (Just s,  h) -> case dropWhile ((s /=) . fst) $ reverse h of

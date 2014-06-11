@@ -13,7 +13,6 @@ import Filesystem.Path.CurrentOS
 import Database.SchemeMilk.Internal
 import Database.SchemeMilk.Types
 import Options.Applicative hiding (helper)
-import qualified Database.SQLite.Simple as SQLite
 import qualified Database.PostgreSQL.Simple as PSql
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
@@ -29,25 +28,25 @@ readConfig repo =
     Yaml.decodeFile (encodeString $ repoDirectory repo </> "config") >>=
     maybe (fail "cannot read config file.") return 
 
-withConfig :: Config -> (forall b. Backend b => b -> IO a) -> IO a
-withConfig (SQLite a) f = withConnection a f
+withConfig :: Config -> (forall c ci. Backend c ci => c -> IO a) -> IO a
+withConfig (SQLite a) f = withConnection (SQLiteConnInfo a) f
 withConfig (PSql   c) f = withConnection c f
 
-withSavedConfig :: Bool -> Repo -> (forall b. Backend b => b -> IO a) -> IO a
+withSavedConfig :: Bool -> Repo -> (forall c ci. Backend c ci => c -> IO a) -> IO a
 withSavedConfig p repo m = do
     c  <- readConfig repo
     c' <- if p then setPasswordIO c else return c
     withConfig c' m
 
 data Config
-    = SQLite { sqliteConnInfo :: ConnectInfo SQLite.Connection }
-    | PSql   { psqlConnInfo   :: ConnectInfo PSql.Connection   }
+    = SQLite { sqliteConnInfo :: String           }
+    | PSql   { psqlConnInfo   :: PSql.ConnectInfo }
 
 setPasswordIO :: Config -> IO Config
 setPasswordIO s@SQLite{} = return s
-setPasswordIO (PSql (PSqlConnInfo c)) = do
+setPasswordIO (PSql c) = do
     p <- getPassword "password: "
-    return . PSql $ PSqlConnInfo c { PSql.connectPassword = p }
+    return . PSql $ c { PSql.connectPassword = p }
 
 getPassword :: String -> IO String
 getPassword prompt = do
@@ -62,8 +61,8 @@ instance Yaml.FromJSON Config where
     parseJSON (Yaml.Object o) = do 
         backend <- o Yaml..: "backend"
         case backend :: String of
-            "sqlite"     -> SQLite . SQLiteConnInfo <$> o Yaml..: "connect_info"
-            "postgresql" -> PSql   . PSqlConnInfo   <$> pci
+            "sqlite"     -> SQLite <$> o Yaml..: "connect_info"
+            "postgresql" -> PSql   <$> pci
             _            -> fail "unknown backend."
       where
         pci = PSql.ConnectInfo
@@ -75,11 +74,11 @@ instance Yaml.FromJSON Config where
     parseJSON _ = fail "not object"
 
 instance Yaml.ToJSON Config where
-    toJSON (SQLite (SQLiteConnInfo ci)) = Yaml.object 
+    toJSON (SQLite ci) = Yaml.object 
         [ "backend"      Yaml..= ("sqlite" :: T.Text)
         , "connect_info" Yaml..= ci
         ]
-    toJSON (PSql (PSqlConnInfo ci)) = Yaml.object $
+    toJSON (PSql ci) = Yaml.object $
         (if Prelude.null $ PSql.connectPassword ci 
          then id
          else (("password" Yaml..= PSql.connectPassword ci):))
@@ -105,9 +104,9 @@ config user = subparser $ mconcat
     , command "postgresql" (info (helper <*> psql)   $ progDesc "postgresql backend")
     ]
   where
-    sqlite = SQLite . SQLiteConnInfo <$> argument str (metavar "DB" <> help "sqlite database file.")
+    sqlite = SQLite <$> argument str (metavar "DB" <> help "sqlite database file.")
     showDefStr = showDefaultWith id
-    psql   = fmap (PSql . PSqlConnInfo) $ PSql.ConnectInfo
+    psql   = fmap PSql $ PSql.ConnectInfo
         <$> strOption (short 'h' <> long "host" <> value "localhost" <> metavar "HOST" <> help "postgresql host" <> showDefStr)
         <*> option    (short 'p' <> long "port" <> value 5432        <> metavar "PORT" <> help "postgresql port" <> showDefault)
         <*> strOption (short 'u' <> long "user" <> maybe mempty value user <> metavar "USER" <> help "postgresql user" <> showDefStr) 
@@ -147,6 +146,9 @@ main = do
   where
     repo = Repo ".schememilk"
 
+guardAdminTable :: Backend conn ci => conn -> IO ()
+guardAdminTable c = adminTableExists c >>= \b -> if b then return () else createAdminTable c
+
 doAction :: Repo -> Action -> IO ()
 doAction repo InitRepo{..} = setPasswordIO optConfig >>= \c -> withConfig c $ \conn -> do
     initRepo conn repo
@@ -154,7 +156,7 @@ doAction repo InitRepo{..} = setPasswordIO optConfig >>= \c -> withConfig c $ \c
     writeFile (repoDirectory repo </> "template.yml") "description: \nup: \ndown: \n"
 
 doAction repo ShowStatus{..} = withSavedConfig askPassword repo $ \conn -> withTransaction conn $ do
-    createAdminTable conn
+    guardAdminTable conn
     (showf <$> currentVersion conn <*> upper conn repo) >>= SC.putStrLn
   where
     showf v       [] = maybe "no schema" (\v' -> SC.concat ["db version: ", unIdent v', "(latest)"]) v
@@ -182,7 +184,7 @@ doAction repo NewScheme{} = do
         else cmt modt >> putStrLn "new schema created."
 
 doAction repo UpScheme{..}  = withSavedConfig askPassword repo $ \conn -> 
-    withTransaction conn (createAdminTable conn >> upper conn repo) >>= \case
+    withTransaction conn (guardAdminTable conn >> upper conn repo) >>= \case
         []      -> putStrLn "newest."
         (i,_):_ -> Yaml.decodeFileEither (encodeString $ schemeFile repo i) >>= \case
             Left  e -> print e
@@ -200,7 +202,7 @@ doAction repo DownScheme{..} = withSavedConfig askPassword repo $ \conn -> lower
                 setVersion conn (fst <$> listToMaybe o)
 
 doAction repo CurrentScheme{..} = withSavedConfig askPassword repo $ \conn -> 
-    withTransaction conn (createAdminTable conn >> upper conn repo) >>= \case
+    withTransaction conn (guardAdminTable conn >> upper conn repo) >>= \case
         []  -> putStrLn "newest."
         ss  -> withTransaction conn $ forM_ ss $ \(i,_) ->
             Yaml.decodeFileEither (encodeString $ schemeFile repo i) >>= \case

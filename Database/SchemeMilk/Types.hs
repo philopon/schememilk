@@ -1,9 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE AutoDeriveTypeable #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE FunctionalDependencies #-}
 
 module Database.SchemeMilk.Types where
 
+import Control.Applicative
 import Control.Monad
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -20,65 +22,74 @@ newtype Query = Query { unQuery :: T.Text }
 newtype Ident = Ident { unIdent :: S.ByteString }
     deriving (Show, Eq, Ord)
 
-class Backend a where
-    data ConnectInfo a
+class Backend conn ci | conn -> ci, ci -> conn where
+    connect    :: ci   -> IO conn
+    close      :: conn -> IO ()
 
-    connect    :: ConnectInfo a -> IO a
-    close      :: a -> IO ()
+    execute_   :: conn -> Query -> IO ()
 
-    execute_   :: a -> Query -> IO ()
+    begin           :: conn -> IO ()
+    commit          :: conn -> IO ()
+    rollback        :: conn -> IO ()
+    withTransaction :: conn -> IO b -> IO b
 
-    begin           :: a -> IO ()
-    commit          :: a -> IO ()
-    rollback        :: a -> IO ()
-    withTransaction :: a -> IO b -> IO b
+    currentVersion  :: conn -> IO (Maybe Ident)
+    setVersion      :: conn -> Maybe Ident -> IO ()
 
-    currentVersion  :: a -> IO (Maybe Ident)
-    setVersion      :: a -> Maybe Ident -> IO ()
-
-    createAdminTable :: a -> IO ()
+    createAdminTable :: conn -> IO ()
     createAdminTable c = execute_ c . Query $ T.unlines
-        [ "CREATE TABLE IF NOT EXISTS _scheme_milk ("
+        [ "CREATE TABLE _scheme_milk ("
         ,   "id         SERIAL      PRIMARY KEY,"
         ,   "version    VARCHAR(40),"
         ,   "applied_at TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP )"
         ]
+    adminTableExists :: conn -> IO Bool
 
-instance Backend SQLite.Connection where
-    newtype ConnectInfo SQLite.Connection = SQLiteConnInfo { unSQLiteConnInfo :: String } 
-        deriving (Show, Read, Eq, Ord)
+newtype SQLiteConnInfo = SQLiteConnInfo { unSQLiteConnInfo :: String }
 
+instance Backend SQLite.Connection SQLiteConnInfo where
     connect  i   = SQLite.open (unSQLiteConnInfo i)
     close        = SQLite.close
 
     execute_ c t   = SQLite.execute_ c (SQLite.Query $ unQuery t)
+
     begin    c     = SQLite.execute_ c "BEGIN TRANSACTION"
     commit   c     = SQLite.execute_ c "COMMIT TRANSACTION"
     rollback c     = SQLite.execute_ c "ROLLBACK TRANSACTION"
     withTransaction = SQLite.withTransaction
+
     createAdminTable c = execute_ c $ Query $ T.unlines
-        [ "CREATE TABLE IF NOT  EXISTS _scheme_milk ("
+        [ "CREATE TABLE _scheme_milk ("
         ,   "id         INTEGER     PRIMARY KEY AUTOINCREMENT,"
         ,   "version    VARCHAR(40),"
         ,   "applied_at TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP )"
         ]
+    adminTableExists c = (> 0) . asInt . SQLite.fromOnly . head <$>
+        SQLite.query_ c "SELECT count(*) FROM sqlite_master WHERE name = '_scheme_milk'"
+
     currentVersion = defaultCurrentVersion SQLite.fromOnly SQLite.query_
     setVersion = defaultSetVersion SQLite.execute SQLite.Only
 
-instance Backend PSql.Connection where
-    newtype ConnectInfo PSql.Connection = PSqlConnInfo { unPSqlConnInfo :: PSql.ConnectInfo }
 
-    connect i = PSql.connect (unPSqlConnInfo i)
+instance Backend PSql.Connection PSql.ConnectInfo where
+    connect i = PSql.connect i
     close     = PSql.close
 
     execute_ c t = void $ PSql.execute_ c (PSql.Query . T.encodeUtf8 $ unQuery t)
+
     begin    = PSql.begin
     commit   = PSql.commit
     rollback = PSql.rollback
     withTransaction = PSql.withTransaction
 
+    adminTableExists c = (> 0) . asInt . PSql.fromOnly . head <$> 
+        PSql.query_ c "SELECT count(*) FROM pg_class WHERE relname = '_scheme_milk'"
+
     currentVersion = defaultCurrentVersion PSql.fromOnly PSql.query_
     setVersion = defaultSetVersion PSql.execute PSql.Only
+
+asInt :: Int -> Int
+asInt = id
 
 defaultCurrentVersion :: IsString q
                       => (v -> Maybe T.Text) -> (c -> q -> IO [v]) -> c -> IO (Maybe Ident)
@@ -92,6 +103,7 @@ defaultSetVersion execute only c i = void $
     execute c "INSERT INTO _scheme_milk (version) VALUES (?)"
     (only $ fmap (T.decodeUtf8 . unIdent) i)
 
+{-
 canonicalizeSql :: T.Text -> T.Text
 canonicalizeSql = T.concat . map (reduce . T.unpack) . T.groupBy gf 
   where
@@ -106,7 +118,6 @@ canonicalizeSql = T.concat . map (reduce . T.unpack) . T.groupBy gf
         | length s == 1 = T.singleton $ head s
         | otherwise     = " "
 
-{-
 check c m = bracket_ (begin c) (rollback c) $ do
     a <- map reader <$> SQLite.query_ c queryStr
     execute c m
