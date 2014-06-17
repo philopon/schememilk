@@ -18,7 +18,6 @@ library
                        Database.Schememilk.Types
   other-modules:       Database.Schememilk.Internal
   other-extensions:    OverloadedStrings
-                       AutoDeriveTypeable
   build-depends:       base                 >=4.6  && <4.8
                      , text                 >=1.1  && <1.2
                      , system-fileio        >=0.3  && <0.4

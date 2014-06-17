@@ -16,7 +16,6 @@ cabal-version:       >=1.10
 library
   exposed-modules:     Database.Schememilk.SQLite
   other-extensions:    OverloadedStrings
-                       AutoDeriveTypeable
   build-depends:       base                 >=4.6  && <4.8
                      , schememilk           >=0.1  && <0.2
                      , sqlite-simple        >=0.4  && <0.5
