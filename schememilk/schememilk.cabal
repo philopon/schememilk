@@ -19,7 +19,7 @@ cabal-version:       >=1.10
 library
   exposed-modules:     Database.SchemeMilk
                        Database.SchemeMilk.Types
-                       Database.SchemeMilk.Internal
+  other-modules:       Database.SchemeMilk.Internal
   other-extensions:    OverloadedStrings
                        AutoDeriveTypeable
   build-depends:       base                 >=4.7  && <4.8

@@ -11,7 +11,6 @@ import System.IO hiding (writeFile)
 import Filesystem
 import Filesystem.Path.CurrentOS
 import Options.Applicative hiding (helper)
-import qualified Database.PostgreSQL.Simple as PSql
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.ByteString.Char8 as SC
@@ -21,10 +20,9 @@ import Data.Maybe
 import System.Environment
 import System.Process
 
-import Database.SchemeMilk.Internal
-import Database.SchemeMilk.Types
+import Database.SchemeMilk
 import Database.SchemeMilk.SQLite
-import Database.SchemeMilk.PostgreSQL()
+import Database.SchemeMilk.PostgreSQL as PSql
 
 readConfig :: Repo -> IO Config
 readConfig repo =

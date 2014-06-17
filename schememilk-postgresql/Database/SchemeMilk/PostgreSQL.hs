@@ -1,7 +1,10 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Database.SchemeMilk.PostgreSQL () where
+module Database.SchemeMilk.PostgreSQL 
+    (
+    PSql.ConnectInfo(..)
+    ) where
 
 import Control.Monad
 import Control.Applicative
