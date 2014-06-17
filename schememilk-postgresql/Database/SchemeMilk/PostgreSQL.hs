@@ -1,7 +1,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Database.SchemeMilk.PostgreSQL 
+module Database.Schememilk.PostgreSQL 
     (
     PSql.ConnectInfo(..)
     ) where
@@ -9,7 +9,7 @@ module Database.SchemeMilk.PostgreSQL
 import Control.Monad
 import Control.Applicative
 import qualified Data.Text.Encoding as T
-import Database.SchemeMilk.Types
+import Database.Schememilk.Types
 import qualified Database.PostgreSQL.Simple as PSql
 import qualified Database.PostgreSQL.Simple.Types as PSql
 

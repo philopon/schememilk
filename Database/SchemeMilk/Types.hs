@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FunctionalDependencies #-}
 
-module Database.SchemeMilk.Types where
+module Database.Schememilk.Types where
 
 import Control.Monad
 import qualified Data.Text as T

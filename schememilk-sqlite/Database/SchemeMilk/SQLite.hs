@@ -1,13 +1,13 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Database.SchemeMilk.SQLite
+module Database.Schememilk.SQLite
     (SQLiteConnInfo(..)) where
 
 import Control.Applicative
 import qualified Data.Text as T
 import qualified Database.SQLite.Simple as SQLite
-import Database.SchemeMilk.Types
+import Database.Schememilk.Types
 
 newtype SQLiteConnInfo = SQLiteConnInfo { unSQLiteConnInfo :: String }
 

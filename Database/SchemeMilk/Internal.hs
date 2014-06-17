@@ -7,13 +7,13 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE Rank2Types #-}
 
-module Database.SchemeMilk.Internal where
+module Database.Schememilk.Internal where
 
 import Prelude hiding (FilePath, readFile, appendFile)
 
 import Control.Applicative
 import Data.Yaml
-import Database.SchemeMilk.Types
+import Database.Schememilk.Types
 import Filesystem
 import Filesystem.Path.CurrentOS
 import System.Random.MWC

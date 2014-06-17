@@ -20,9 +20,9 @@ import Data.Maybe
 import System.Environment
 import System.Process
 
-import Database.SchemeMilk
-import Database.SchemeMilk.SQLite
-import Database.SchemeMilk.PostgreSQL as PSql
+import Database.Schememilk
+import Database.Schememilk.SQLite
+import Database.Schememilk.PostgreSQL as PSql
 
 readConfig :: Repo -> IO Config
 readConfig repo =

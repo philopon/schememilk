@@ -1,4 +1,4 @@
-module Database.SchemeMilk
+module Database.Schememilk
     ( withConnection
     , upper
     , lower
@@ -9,11 +9,11 @@ module Database.SchemeMilk
     , Ident(..), Scheme(..)
     , Repo(..)
     , initRepo, guardAdminTable, newScheme, schemeFile
-    , module Database.SchemeMilk.Types
+    , module Database.Schememilk.Types
     ) where
 
-import Database.SchemeMilk.Types
-import Database.SchemeMilk.Internal
+import Database.Schememilk.Types
+import Database.Schememilk.Internal
 
 up :: Backend conn ci => conn -> Repo -> IO (Maybe Ident)
 up c = applyScheme ((:[]) . head) upSql c 
