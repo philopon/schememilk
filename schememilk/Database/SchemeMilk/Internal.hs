@@ -5,17 +5,18 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE Rank2Types #-}
 
 module Database.SchemeMilk.Internal where
 
 import Prelude hiding (FilePath, readFile, appendFile)
 
+import Control.Applicative
 import Data.Yaml
 import Database.SchemeMilk.Types
 import Filesystem
 import Filesystem.Path.CurrentOS
 import System.Random.MWC
-import Options.Applicative
 
 import Control.Exception
 import Control.Monad
@@ -77,8 +78,8 @@ newIdent l g = do
 newScheme :: Repo
           -> FilePath -- ^ template
           -> IO (Ident
-                , UTCTime -> IO () -- ^ commit
-                , IO () -- ^ rollback
+                , UTCTime -> IO () -- commit
+                , IO () -- rollback
                 )
 newScheme repo temp = do
     hist  <- readHistoryFile repo
@@ -126,3 +127,18 @@ left :: (l -> l') -> Either l r -> Either l' r
 left f (Left a)  = Left $ f a
 left _ (Right a) = Right a
 
+guardAdminTable :: Backend conn ci => conn -> IO ()
+guardAdminTable c = adminTableExists c >>= \b -> if b then return () else createAdminTable c
+
+applyScheme :: Backend conn ci => (forall a. [a] -> [a])
+            -> (Scheme -> [Query]) -> conn -> Repo -> IO (Maybe Ident)
+applyScheme f g conn repo = withTransaction conn (guardAdminTable conn >> upper conn repo) >>= \case
+    [] -> return Nothing
+    ss -> withTransaction conn $ foldM (\_ (i, _) ->
+        decodeFileEither (encodeString $ schemeFile repo i) >>= \case
+            Left  e -> throwIO e
+            Right s -> do
+                mapM_ (execute_ conn) (g s) 
+                setVersion conn (Just i) 
+                return $ Just i
+            ) Nothing (f ss)

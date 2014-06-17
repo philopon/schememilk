@@ -10,8 +10,6 @@ import Prelude hiding (writeFile)
 import System.IO hiding (writeFile)
 import Filesystem
 import Filesystem.Path.CurrentOS
-import Database.SchemeMilk.Internal
-import Database.SchemeMilk.Types
 import Options.Applicative hiding (helper)
 import qualified Database.PostgreSQL.Simple as PSql
 import qualified Data.Text as T
@@ -22,6 +20,11 @@ import Data.Monoid
 import Data.Maybe
 import System.Environment
 import System.Process
+
+import Database.SchemeMilk.Internal
+import Database.SchemeMilk.Types
+import Database.SchemeMilk.SQLite
+import Database.SchemeMilk.PostgreSQL()
 
 readConfig :: Repo -> IO Config
 readConfig repo =
@@ -145,9 +148,6 @@ main = do
     execParser (info (helper <*> options user) fullDesc) >>= doAction repo
   where
     repo = Repo ".schememilk"
-
-guardAdminTable :: Backend conn ci => conn -> IO ()
-guardAdminTable c = adminTableExists c >>= \b -> if b then return () else createAdminTable c
 
 doAction :: Repo -> Action -> IO ()
 doAction repo InitRepo{..} = setPasswordIO optConfig >>= \c -> withConfig c $ \conn -> do
