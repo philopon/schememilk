@@ -5,21 +5,13 @@ module Database.Schememilk
     , listLog
 
     , up, down, current
+    , NewSchema(..)
 
-    , Ident(..), Scheme(..)
+    , Ident(..), Schema(..)
     , Repo(..)
-    , initRepo, guardAdminTable, newScheme, schemeFile
+    , initRepo, guardAdminTable, newSchema, schemaFile
     , module Database.Schememilk.Types
     ) where
 
 import Database.Schememilk.Types
 import Database.Schememilk.Internal
-
-up :: Backend conn ci => conn -> Repo -> IO (Maybe Ident)
-up c = applyScheme ((:[]) . head) upSql c 
-
-down :: Backend conn ci => conn -> Repo -> IO (Maybe Ident)
-down c = applyScheme ((:[]) . head) dnSql c
-
-current :: Backend conn ci => conn -> Repo -> IO (Maybe Ident)
-current c = applyScheme id upSql c

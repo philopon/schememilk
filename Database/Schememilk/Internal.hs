@@ -44,16 +44,16 @@ deriving instance IsString Repo
 historyFile :: Repo -> FilePath
 historyFile (Repo p) = p </> "history.txt"
 
-schemeDirectory :: Repo -> FilePath
-schemeDirectory (Repo p) = p </> "scheme"
+schemaDirectory :: Repo -> FilePath
+schemaDirectory (Repo p) = p </> "schema"
 
-schemeFile :: Repo -> Ident -> FilePath
-schemeFile repo (Ident idnt) = schemeDirectory repo </> decodeString (SC.unpack idnt)
+schemaFile :: Repo -> Ident -> FilePath
+schemaFile repo (Ident idnt) = schemaDirectory repo </> decodeString (SC.unpack idnt)
 
 initRepo :: Backend c ci => c -> Repo -> IO ()
 initRepo conn d = do
     createDirectory False $ repoDirectory d
-    createDirectory False $ schemeDirectory d
+    createDirectory False $ schemaDirectory d
     touchFile $ historyFile d
     createAdminTable conn
 
@@ -75,20 +75,23 @@ newIdent l g = do
     idnt <- (Ident . S.pack) `liftM` replicateM 8 (uniformIdChar g)
     if Set.member idnt l then newIdent l g else return idnt
 
-newScheme :: Repo
+data NewSchema = NewSchema
+    { newSchemaIdent    :: Ident
+    , commitNewSchema   :: UTCTime -> IO ()
+    , rollbackNewSchema :: IO ()
+    }
+
+newSchema :: Repo
           -> FilePath -- ^ template
-          -> IO (Ident
-                , UTCTime -> IO () -- commit
-                , IO () -- rollback
-                )
-newScheme repo temp = do
+          -> IO NewSchema
+newSchema repo temp = do
     hist  <- readHistoryFile repo
     newId <- withSystemRandom . asGenIO $ newIdent (Set.fromList $ map fst hist)
-    copyFile temp $ schemeFile repo newId
+    copyFile temp $ schemaFile repo newId
     let commitf time = do
             appendFile (historyFile repo) $ unIdent newId `SC.append` SC.pack (' ' : show time ++ "\n")
-        rollbackf = removeFile $ schemeFile repo newId
-    return (newId, commitf, rollbackf)
+        rollbackf = removeFile $ schemaFile repo newId
+    return $ NewSchema newId commitf rollbackf
 
 
 upper :: Backend c ci => c -> Repo -> IO [(Ident, UTCTime)]
@@ -106,22 +109,22 @@ lower conn repo = (,) <$> currentVersion conn <*> readHistoryFile repo >>= \case
         [] -> return h
         a  -> return a
 
-data Scheme = Scheme
+data Schema = Schema
     { description :: Maybe T.Text
     , upSql :: [Query]
     , dnSql :: [Query]
     } deriving Show
 
-instance FromJSON Scheme where
-    parseJSON (Object o) = Scheme <$> (o .:? "description") <*> (o .: "up" >>= f) <*> (o .: "down" >>= f)
+instance FromJSON Schema where
+    parseJSON (Object o) = Schema <$> (o .:? "description") <*> (o .: "up" >>= f) <*> (o .: "down" >>= f)
       where 
         f a = fmap (map Query)     (parseJSON a) <|> 
               fmap ((:[]) . Query) (parseJSON a)
     parseJSON _ = mzero
 
-listLog :: Repo -> IO [(Ident, UTCTime, Either ParseException Scheme)]
+listLog :: Repo -> IO [(Ident, UTCTime, Either ParseException Schema)]
 listLog repo = readHistoryFile repo >>=
-    mapM (\(i,t) -> (i,t,) <$> (decodeFileEither . encodeString $ schemeFile repo i))
+    mapM (\(i,t) -> (i,t,) <$> (decodeFileEither . encodeString $ schemaFile repo i))
 
 left :: (l -> l') -> Either l r -> Either l' r
 left f (Left a)  = Left $ f a
@@ -130,15 +133,24 @@ left _ (Right a) = Right a
 guardAdminTable :: Backend conn ci => conn -> IO ()
 guardAdminTable c = adminTableExists c >>= \b -> if b then return () else createAdminTable c
 
-applyScheme :: Backend conn ci => (forall a. [a] -> [a])
-            -> (Scheme -> [Query]) -> conn -> Repo -> IO (Maybe Ident)
-applyScheme f g conn repo = withTransaction conn (guardAdminTable conn >> upper conn repo) >>= \case
+applySchema :: Backend conn ci => (forall a. [a] -> [a])
+            -> (Schema -> [Query]) -> conn -> Repo -> IO (Maybe Ident)
+applySchema f g conn repo = withTransaction conn (guardAdminTable conn >> upper conn repo) >>= \case
     [] -> return Nothing
     ss -> withTransaction conn $ foldM (\_ (i, _) ->
-        decodeFileEither (encodeString $ schemeFile repo i) >>= \case
+        decodeFileEither (encodeString $ schemaFile repo i) >>= \case
             Left  e -> throwIO e
             Right s -> do
                 mapM_ (execute_ conn) (g s) 
                 setVersion conn (Just i) 
                 return $ Just i
             ) Nothing (f ss)
+
+up :: Backend conn ci => conn -> Repo -> IO (Maybe Ident)
+up c = applySchema ((:[]) . head) upSql c 
+
+down :: Backend conn ci => conn -> Repo -> IO (Maybe Ident)
+down c = applySchema ((:[]) . head) dnSql c
+
+current :: Backend conn ci => conn -> Repo -> IO (Maybe Ident)
+current c = applySchema id upSql c
