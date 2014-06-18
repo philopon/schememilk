@@ -184,7 +184,7 @@ doAction repo UpScheme{..}  = withSavedConfig askPassword repo $ \conn ->
     up conn repo >>= maybe (putStrLn "newest.") (\(Ident i) -> SC.putStrLn $ SC.unwords ["up to", i])
 
 doAction repo DownScheme{..} = withSavedConfig askPassword repo $ \conn -> 
-    down conn repo >>= maybe (putStrLn "newest.") (\(Ident i) -> SC.putStrLn $ SC.unwords ["down to", i])
+    down conn repo >>= maybe (putStrLn "newest.") (\(Ident i) -> SC.putStrLn $ SC.unwords ["down from", i])
 
 doAction repo CurrentScheme{..} = withSavedConfig askPassword repo $ \conn -> 
     current conn repo >>= maybe (putStrLn "newest.") (\(Ident i) -> SC.putStrLn $ SC.unwords ["up to", i])
