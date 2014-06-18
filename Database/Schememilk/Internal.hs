@@ -23,6 +23,7 @@ import Control.Monad
 import Control.Monad.Primitive
 
 import Data.Word
+import Data.Maybe
 import qualified Data.Set as Set
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Char8 as SC
@@ -133,24 +134,32 @@ left _ (Right a) = Right a
 guardAdminTable :: Backend conn ci => conn -> IO ()
 guardAdminTable c = adminTableExists c >>= \b -> if b then return () else createAdminTable c
 
-applySchema :: Backend conn ci => (forall a. [a] -> [a])
-            -> (Schema -> [Query]) -> conn -> Repo -> IO (Maybe Ident)
-applySchema f g conn repo = withTransaction conn (guardAdminTable conn >> upper conn repo) >>= \case
+applySchema :: Backend conn ci
+            => (forall a. [a] -> [a])
+            -> conn -> Repo -> IO (Maybe Ident)
+applySchema f conn repo = withTransaction conn (guardAdminTable conn >> upper conn repo) >>= \case
     [] -> return Nothing
     ss -> withTransaction conn $ foldM (\_ (i, _) ->
         decodeFileEither (encodeString $ schemaFile repo i) >>= \case
             Left  e -> throwIO e
             Right s -> do
-                mapM_ (execute_ conn) (g s) 
+                mapM_ (execute_ conn) (upSql s) 
                 setVersion conn (Just i) 
                 return $ Just i
             ) Nothing (f ss)
 
 up :: Backend conn ci => conn -> Repo -> IO (Maybe Ident)
-up c = applySchema ((:[]) . head) upSql c 
-
-down :: Backend conn ci => conn -> Repo -> IO (Maybe Ident)
-down c = applySchema ((:[]) . head) dnSql c
+up = applySchema ((:[]) . head)
 
 current :: Backend conn ci => conn -> Repo -> IO (Maybe Ident)
-current c = applySchema id upSql c
+current = applySchema id
+
+down :: Backend conn ci => conn -> Repo -> IO (Maybe Ident)
+down conn repo = lower conn repo >>= \case
+    []      -> return Nothing
+    (i,_):o -> decodeFileEither (encodeString $ schemaFile repo i) >>= \case
+            Left  e -> throwIO e
+            Right s -> do 
+                withTransaction conn $ mapM_ (execute_ conn) (dnSql s) 
+                setVersion conn (fst <$> listToMaybe o)
+                return $ Just i
